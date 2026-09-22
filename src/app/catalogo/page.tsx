@@ -1,7 +1,8 @@
 "use client";
-
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { supabase } from "@/supabase/client";
+import { useCart } from "@/context/CartContext";
 
 type Product = {
   id: string;
@@ -19,6 +20,7 @@ export default function Catalogo() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const { addItem, items } = useCart();
 
   async function loadData() {
     const { data: prods, error } = await supabase
@@ -62,7 +64,12 @@ export default function Catalogo() {
       <div style={{ background: "#2E7D32", color: "white", padding: "1.5rem 2rem" }}>
         <h1 style={{ margin: 0, fontSize: "1.5rem" }}>🍎 Cooperativa Escolar</h1>
         <p style={{ margin: "0.25rem 0 0", opacity: 0.9 }}>Catálogo del día</p>
-        
+      </div>
+
+      <div style={{ padding: "1rem 2rem 0", textAlign: "right" }}>
+       <Link href="/carrito" style={{ color: "#2E7D32", fontWeight: 700, textDecoration: "none" }}>
+          🛒 Ver carrito ({items.reduce((sum, i) => sum + i.quantity, 0)})
+        </Link>
       </div>
 
       <div
@@ -125,6 +132,21 @@ export default function Catalogo() {
                   {inStock ? `En stock (${product.stock_current})` : "Agotado"}
                 </span>
               </div>
+              <button
+                onClick={() => addItem({ id: product.id, name: product.name, price: product.price })}
+                disabled={!inStock}
+                style={{
+                  background: inStock ? "#2E7D32" : "#ccc",
+                  color: "white",
+                  border: "none",
+                  padding: "0.5rem",
+                  borderRadius: "6px",
+                  cursor: inStock ? "pointer" : "not-allowed",
+                  fontWeight: 600,
+                }}
+              >
+                {inStock ? "Agregar al carrito" : "No disponible"}
+              </button>
             </div>
           );
         })}
