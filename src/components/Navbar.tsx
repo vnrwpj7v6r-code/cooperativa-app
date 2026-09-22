@@ -32,6 +32,8 @@ export default function Navbar() {
     window.location.href = "/login";
   }
 
+  const isOperator = role === "operator" || role === "admin";
+
   return (
     <nav
       style={{
@@ -56,10 +58,21 @@ export default function Navbar() {
         🍎 Catálogo
       </Link>
 
-      {(role === "operator" || role === "admin") && (
-        <Link href="/admin/productos" style={{ color: "white", textDecoration: "none" }}>
-          Admin
+      {isLoggedIn && !isOperator && (
+        <Link href="/mis-pedidos" style={{ color: "white", textDecoration: "none" }}>
+          Mis pedidos
         </Link>
+      )}
+
+      {isOperator && (
+        <>
+          <Link href="/admin/productos" style={{ color: "white", textDecoration: "none" }}>
+            Productos
+          </Link>
+          <Link href="/admin/pedidos" style={{ color: "white", textDecoration: "none" }}>
+            Pedidos
+          </Link>
+        </>
       )}
 
       <div style={{ flex: 1 }} />
