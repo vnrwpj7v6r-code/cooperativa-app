@@ -72,6 +72,9 @@ export default function Navbar() {
           <Link href="/admin/pedidos" style={{ color: "white", textDecoration: "none" }}>
             Pedidos
           </Link>
+          <Link href="/admin/inventario" style={{ color: "white", textDecoration: "none" }}>
+            Inventario
+          </Link>
         </>
       )}
 
