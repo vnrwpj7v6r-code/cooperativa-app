@@ -6,6 +6,7 @@ import { supabase } from "@/supabase/client";
 
 type OrderItem = {
   id: string;
+  product_id: string;
   quantity: number;
   unit_price: number;
   product: { name: string } | null;
@@ -23,10 +24,10 @@ type Order = {
   order_items: OrderItem[];
 };
 
-const STATUS_FLOW: Record<string, { next: string; label: string; color: string }> = {
-  recibido: { next: "en_preparacion", label: "Empezar preparación", color: "#CDDC39" },
-  en_preparacion: { next: "listo", label: "Marcar como listo", color: "#A5D6A7" },
-  listo: { next: "entregado", label: "Marcar entregado", color: "#2E7D32" },
+const STATUS_FLOW: Record<string, { next: string; label: string }> = {
+  recibido: { next: "en_preparacion", label: "Empezar preparación" },
+  en_preparacion: { next: "listo", label: "Marcar como listo" },
+  listo: { next: "entregado", label: "Marcar entregado" },
 };
 
 export default function AdminPedidos() {
@@ -34,15 +35,46 @@ export default function AdminPedidos() {
   const [checking, setChecking] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
   const [totalIngresos, setTotalIngresos] = useState(0);
+  const [alertaNuevoPedido, setAlertaNuevoPedido] = useState<string | null>(null);
+
+  function reproducirAlertaSonora() {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // Nota D5
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15); // Nota A5
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.45);
+    } catch (e) {
+      console.log("Audio bloqueado hasta interacción del usuario");
+    }
+  }
+
+  function activarNotificaciones() {
+    reproducirAlertaSonora();
+    if ("Notification" in window) {
+      Notification.requestPermission().then((perm) => {
+        if (perm === "granted") {
+          alert("✅ Alertas sonoras y notificaciones activadas.");
+        }
+      });
+    }
+  }
 
   async function loadOrders() {
-    // 1. Cargar los pedidos activos en pantalla
     const { data, error } = await supabase
       .from("orders")
       .select(`
         id, status, payment_method, total_amount, pickup_code, created_at, is_paid,
         profiles ( * ),
-        order_items ( id, quantity, unit_price, product:products ( name ) )
+        order_items ( id, product_id, quantity, unit_price, product:products ( name ) )
       `)
       .neq("status", "entregado")
       .neq("status", "cancelado")
@@ -51,7 +83,6 @@ export default function AdminPedidos() {
     if (error) console.error("Error cargando pedidos:", error);
     setOrders((data as unknown as Order[]) ?? []);
 
-    // 2. Cargar el total histórico de dinero de TODOS los pedidos pagados
     const { data: incomeData } = await supabase
       .from("orders")
       .select("total_amount")
@@ -88,9 +119,21 @@ export default function AdminPedidos() {
 
   useEffect(() => {
     loadOrders();
+
     const channel = supabase
       .channel("orders-admin-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "orders" }, (payload) => {
+        reproducirAlertaSonora();
+        const code = payload.new?.pickup_code ? `#${payload.new.pickup_code}` : "";
+        setAlertaNuevoPedido(`🔔 ¡Nuevo pedido recibido ${code}!`);
+        if ("Notification" in window && Notification.permission === "granted") {
+          new Notification("🍎 Nuevo pedido en Cooperativa", {
+            body: `Acaba de llegar el pedido ${code}.`,
+          });
+        }
+        loadOrders();
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "orders" }, () => {
         loadOrders();
       })
       .subscribe();
@@ -100,16 +143,39 @@ export default function AdminPedidos() {
     };
   }, []);
 
-  async function advanceStatus(orderId: string, nextStatus: string, isPaid: boolean) {
-    if (nextStatus === "entregado" && !isPaid) {
+  async function advanceStatus(order: Order, nextStatus: string) {
+    if (nextStatus === "entregado" && !order.is_paid) {
       alert("⚠️ ¡No puedes entregar este pedido!\n\nPrimero debes hacer clic en '💰 REGISTRAR COBRO' para confirmar el pago.");
       return;
+    }
+
+    // Si se marca como entregado, descontar el stock de cada producto
+    if (nextStatus === "entregado") {
+      for (const item of order.order_items) {
+        if (item.product_id) {
+          const { data: prod } = await supabase
+            .from("products")
+            .select("stock_current")
+            .eq("id", item.product_id)
+            .single();
+
+          if (prod) {
+            const nuevoStock = Math.max(0, (prod.stock_current ?? 0) - item.quantity);
+            await supabase
+              .from("products")
+              .update({ stock_current: nuevoStock })
+              .eq("id", item.product_id);
+          }
+        }
+      }
     }
 
     await supabase
       .from("orders")
       .update({ status: nextStatus, updated_at: new Date().toISOString() })
-      .eq("id", orderId);
+      .eq("id", order.id);
+
+    loadOrders();
   }
 
   async function togglePayment(orderId: string, currentPaidStatus: boolean) {
@@ -117,6 +183,8 @@ export default function AdminPedidos() {
       .from("orders")
       .update({ is_paid: !currentPaidStatus, updated_at: new Date().toISOString() })
       .eq("id", orderId);
+
+    loadOrders();
   }
 
   if (checking) {
@@ -124,9 +192,29 @@ export default function AdminPedidos() {
   }
 
   return (
-    <main style={{ background: "#E8F5E9", minHeight: "100vh", padding: "2rem" }}>
+    <main style={{ background: "#E8F5E9", minHeight: "100vh", padding: "1.5rem" }}>
+      {alertaNuevoPedido && (
+        <div style={{ background: "#F59E0B", color: "#111", padding: "1rem 1.5rem", borderRadius: "8px", marginBottom: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", fontWeight: 800, boxShadow: "0 4px 10px rgba(0,0,0,0.15)" }}>
+          <span>{alertaNuevoPedido}</span>
+          <button
+            onClick={() => setAlertaNuevoPedido(null)}
+            style={{ background: "#111", color: "#fff", border: "none", padding: "0.3rem 0.7rem", borderRadius: "4px", cursor: "pointer" }}
+          >
+            Cerrar
+          </button>
+        </div>
+      )}
+
       <div style={{ background: "#2E7D32", color: "white", padding: "1rem 1.5rem", borderRadius: "8px", marginBottom: "2rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem", boxShadow: "0 4px 6px rgba(0,0,0,0.1)" }}>
-        <h1 style={{ margin: 0 }}>Pedidos en curso ({orders.length})</h1>
+        <div>
+          <h1 style={{ margin: "0 0 0.4rem 0" }}>Pedidos en curso ({orders.length})</h1>
+          <button
+            onClick={activarNotificaciones}
+            style={{ background: "rgba(255,255,255,0.2)", color: "white", border: "1px solid rgba(255,255,255,0.5)", padding: "0.35rem 0.75rem", borderRadius: "6px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" }}
+          >
+            🔔 Activar alertas con sonido
+          </button>
+        </div>
         <div style={{ background: "rgba(255,255,255,0.2)", padding: "0.5rem 1rem", borderRadius: "8px", textAlign: "right" }}>
           <span style={{ fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "1px", fontWeight: "bold" }}>Ingresos totales cobrados</span>
           <p style={{ margin: 0, fontSize: "1.8rem", fontWeight: "bold" }}>${totalIngresos.toFixed(2)}</p>
@@ -144,8 +232,6 @@ export default function AdminPedidos() {
 
           return (
             <div key={order.id} style={{ background: "#FFFFFF", border: "2px solid #81C784", borderRadius: "10px", padding: "1.2rem", display: "flex", flexDirection: "column", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
-              
-              {/* Encabezado de tarjeta */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid #eee", paddingBottom: "0.5rem", marginBottom: "0.5rem" }}>
                 <div>
                   <span style={{ fontWeight: 800, fontSize: "1.3rem", display: "block", color: "#2E7D32" }}>#{order.pickup_code}</span>
@@ -162,7 +248,6 @@ export default function AdminPedidos() {
                 ESTADO: {order.status.replace("_", " ")}
               </p>
 
-              {/* Lista de productos */}
               <ul style={{ margin: "0.5rem 0", paddingLeft: "1.2rem", flex: 1, color: "#222", fontWeight: 500 }}>
                 {order.order_items.map((item) => (
                   <li key={item.id} style={{ marginBottom: "0.3rem" }}>
@@ -171,7 +256,6 @@ export default function AdminPedidos() {
                 ))}
               </ul>
 
-              {/* Sección de pago */}
               <div style={{ background: "#F9FAFB", padding: "1rem", borderRadius: "8px", margin: "1rem 0 0.5rem 0", border: "1px solid #E5E7EB" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                   <p style={{ margin: 0, color: "#111", fontSize: "1.1rem" }}>
@@ -195,17 +279,15 @@ export default function AdminPedidos() {
                     fontSize: "0.95rem",
                     cursor: "pointer",
                     boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-                    transition: "all 0.2s"
                   }}
                 >
                   {order.is_paid ? "✅ PAGO RECIBIDO" : "💰 REGISTRAR COBRO"}
                 </button>
               </div>
 
-              {/* Botón de acción principal */}
               {flow && (
                 <button
-                  onClick={() => advanceStatus(order.id, flow.next, order.is_paid)}
+                  onClick={() => advanceStatus(order, flow.next)}
                   style={{
                     width: "100%",
                     marginTop: "0.5rem",

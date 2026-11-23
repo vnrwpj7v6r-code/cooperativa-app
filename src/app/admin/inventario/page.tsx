@@ -12,7 +12,6 @@ export default function InventarioAdmin() {
   }, []);
 
   async function cargarProductos() {
-    // Ya corregido con los nombres de tu base de datos
     const { data, error } = await supabase
       .from("products")
       .select("*")
@@ -35,17 +34,17 @@ export default function InventarioAdmin() {
     if (error) {
       alert("Hubo un error al actualizar: " + error.message);
     } else {
-      alert("¡Stock actualizado correctamente!");
+      alert("✅ ¡Stock actualizado correctamente!");
     }
   }
 
   if (cargando) {
-    return <p style={{ padding: "2rem", textAlign: "center" }}>Cargando inventario...</p>;
+    return <p style={{ padding: "2rem", color: "#111" }}>Cargando inventario...</p>;
   }
 
   return (
-    <main style={{ padding: "2rem", background: "#FAFAFA", minHeight: "100vh" }}>
-      <h1 style={{ color: "#2E7D32", marginBottom: "2rem" }}>📦 Control de Inventario</h1>
+    <main style={{ padding: "1.5rem", background: "#E8F5E9", minHeight: "100vh" }}>
+      <h1 style={{ color: "#2E7D32", marginBottom: "1.5rem" }}>📦 Control de Inventario</h1>
       
       <div style={{ display: "flex", flexDirection: "column", gap: "1rem", maxWidth: "800px" }}>
         {productos.map((prod) => (
@@ -54,32 +53,41 @@ export default function InventarioAdmin() {
             style={{ 
               display: "flex", 
               justifyContent: "space-between", 
-              alignItems: "center", 
-              background: "white", 
-              padding: "1rem", 
-              borderRadius: "8px", 
-              boxShadow: "0 2px 4px rgba(0,0,0,0.05)" 
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "1rem",
+              background: "#FFFFFF", 
+              padding: "1.2rem", 
+              borderRadius: "10px",
+              border: "2px solid #81C784",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.06)" 
             }}
           >
             <div>
-              <h3 style={{ margin: 0, color: "#333" }}>{prod.name}</h3>
-              <p style={{ margin: 0, color: "#666", fontSize: "0.9rem" }}>Stock actual: {prod.stock_current}</p>
+              <h3 style={{ margin: "0 0 0.3rem 0", color: "#111111", fontSize: "1.1rem" }}>{prod.name}</h3>
+              <p style={{ margin: 0, color: "#374151", fontSize: "0.95rem", fontWeight: 600 }}>
+                Stock actual: <span style={{ color: "#2E7D32" }}>{prod.stock_current}</span>
+              </p>
             </div>
             
             <div style={{ display: "flex", alignItems: "center", gap: "0.8rem" }}>
-              <label style={{ fontSize: "0.9rem", color: "#666" }}>Nuevo stock:</label>
+              <label style={{ fontSize: "0.95rem", color: "#111111", fontWeight: 600 }}>Nuevo stock:</label>
               <input 
                 type="number" 
-                defaultValue={prod.stock_current}
+                value={prod.stock_current}
                 onChange={(e) => {
                   const valor = parseInt(e.target.value) || 0;
                   setProductos(productos.map(p => p.id === prod.id ? { ...p, stock_current: valor } : p));
                 }}
                 style={{ 
-                  width: "70px", 
+                  width: "80px", 
                   padding: "0.5rem", 
                   borderRadius: "6px", 
-                  border: "1px solid #ccc",
+                  border: "2px solid #2E7D32",
+                  backgroundColor: "#FFFFFF",
+                  color: "#111111",
+                  fontWeight: "bold",
+                  fontSize: "1rem",
                   textAlign: "center"
                 }}
               />
@@ -87,11 +95,12 @@ export default function InventarioAdmin() {
                 onClick={() => handleActualizarStock(prod.id, prod.stock_current)}
                 style={{ 
                   background: "#2E7D32", 
-                  color: "white", 
+                  color: "#FFFFFF", 
                   border: "none", 
-                  padding: "0.6rem 1rem", 
+                  padding: "0.6rem 1.2rem", 
                   borderRadius: "6px", 
                   fontWeight: "bold",
+                  fontSize: "0.95rem",
                   cursor: "pointer" 
                 }}
               >
