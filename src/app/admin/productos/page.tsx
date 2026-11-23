@@ -7,17 +7,72 @@ import { supabase } from "@/supabase/client";
 const CAMPUS_ID = "6a19b9ee-ecce-402b-ab52-3a92c69b941f";
 const ORGANIZATION_ID = "160f20fb-3203-478f-b5d4-a2b9e266c99f";
 
+const MENU_OFICIAL = [
+  "Chilaquiles rojos",
+  "Chilaquiles verdes",
+  "Torta de Pierna",
+  "Sandwich de Pavo",
+  "Pay de Queso",
+  "Coca cola",
+  "Agua del día",
+];
+
 type Category = { id: string; name: string };
+
+type Product = {
+  id: string;
+  name: string;
+  price: number;
+  stock_current: number;
+  category_id: string | null;
+  image_url: string | null;
+};
+
+function comprimirImagen(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_SIZE = 450;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height && width > MAX_SIZE) {
+          height = Math.round((height * MAX_SIZE) / width);
+          width = MAX_SIZE;
+        } else if (height > MAX_SIZE) {
+          width = Math.round((width * MAX_SIZE) / height);
+          height = MAX_SIZE;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx?.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.78));
+      };
+      img.onerror = reject;
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function AdminProductos() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [productName, setProductName] = useState("");
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [procesandoMenu, setProcesandoMenu] = useState(false);
   const [message, setMessage] = useState<{ text: string; isError: boolean } | null>(null);
 
   useEffect(() => {
@@ -45,13 +100,22 @@ export default function AdminProductos() {
     checkAccess();
   }, [router]);
 
-  async function loadCategories() {
-    const { data } = await supabase.from("categories").select("id, name").order("name");
-    setCategories(data ?? []);
+  async function loadData() {
+    const { data: catData } = await supabase
+      .from("categories")
+      .select("id, name")
+      .order("name");
+    setCategories(catData ?? []);
+
+    const { data: prodData } = await supabase
+      .from("products")
+      .select("id, name, price, stock_current, category_id, image_url")
+      .order("name");
+    setProducts((prodData as Product[]) ?? []);
   }
 
   useEffect(() => {
-    loadCategories();
+    loadData();
   }, []);
 
   async function handleAddCategory(e: React.FormEvent) {
@@ -67,7 +131,18 @@ export default function AdminProductos() {
     } else {
       setMessage({ text: "✅ Categoría creada correctamente.", isError: false });
       setNewCategoryName("");
-      loadCategories();
+      loadData();
+    }
+  }
+
+  async function handleFileSelectNew(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await comprimirImagen(file);
+      setImageUrl(compressed);
+    } catch {
+      setMessage({ text: "No se pudo procesar la imagen seleccionada.", isError: true });
     }
   }
 
@@ -82,6 +157,7 @@ export default function AdminProductos() {
       category_id: categoryId,
       organization_id: ORGANIZATION_ID,
       campus_id: CAMPUS_ID,
+      image_url: imageUrl.trim() || null,
     });
 
     if (error) {
@@ -92,6 +168,119 @@ export default function AdminProductos() {
       setPrice("");
       setStock("");
       setCategoryId("");
+      setImageUrl("");
+      loadData();
+    }
+  }
+
+  async function handleUpdateProductImage(productId: string, file: File) {
+    try {
+      const compressed = await comprimirImagen(file);
+      const { error } = await supabase
+        .from("products")
+        .update({ image_url: compressed })
+        .eq("id", productId);
+
+      if (error) {
+        setMessage({ text: "Error guardando imagen: " + error.message, isError: true });
+      } else {
+        setMessage({ text: "✅ Imagen actualizada.", isError: false });
+        loadData();
+      }
+    } catch {
+      setMessage({ text: "Error procesando la imagen.", isError: true });
+    }
+  }
+
+  async function handleUpdateProductPrice(productId: string, newPrice: number) {
+    const { error } = await supabase
+      .from("products")
+      .update({ price: newPrice })
+      .eq("id", productId);
+
+    if (error) {
+      setMessage({ text: "Error actualizando precio: " + error.message, isError: true });
+    } else {
+      setMessage({ text: "✅ Precio actualizado.", isError: false });
+      loadData();
+    }
+  }
+
+  async function handleDeleteProduct(productId: string, productName: string) {
+    if (!confirm(`¿Seguro que deseas eliminar "${productName}" del menú?`)) return;
+
+    const { error } = await supabase.from("products").delete().eq("id", productId);
+
+    if (error) {
+      setMessage({
+        text: `No se pudo borrar "${productName}" porque tiene pedidos históricos asociados. Puedes poner su stock en 0 en Inventario.`,
+        isError: true,
+      });
+    } else {
+      setMessage({ text: `🗑️ "${productName}" eliminado del menú.`, isError: false });
+      loadData();
+    }
+  }
+
+  async function handleSyncMenuOficial() {
+    if (!confirm("Esto eliminará los productos que no estén en tu lista de 7 platillos/bebidas y agregará los que falten. ¿Continuar?")) {
+      return;
+    }
+
+    setProcesandoMenu(true);
+    setMessage(null);
+
+    try {
+      // 1. Asegurar que exista al menos una categoría
+      let defaultCatId = categories[0]?.id;
+      if (!defaultCatId) {
+        const { data: newCat } = await supabase
+          .from("categories")
+          .insert({ name: "Menú", organization_id: ORGANIZATION_ID })
+          .select("id")
+          .single();
+        defaultCatId = newCat?.id;
+      }
+
+      const oficialesLower = MENU_OFICIAL.map((n) => n.toLowerCase().trim());
+
+      // 2. Eliminar productos fuera de los 7 oficiales
+      for (const prod of products) {
+        if (!oficialesLower.includes(prod.name.toLowerCase().trim())) {
+          await supabase.from("products").delete().eq("id", prod.id);
+        }
+      }
+
+      // 3. Insertar los que falten de los 7 oficiales
+      const actualesLower = products.map((p) => p.name.toLowerCase().trim());
+      const faltantes = MENU_OFICIAL.filter(
+        (nombre) => !actualesLower.includes(nombre.toLowerCase().trim())
+      );
+
+      if (faltantes.length > 0 && defaultCatId) {
+        const nuevosRegistros = faltantes.map((nombre) => ({
+          name: nombre,
+          price: 0,
+          stock_current: 20,
+          category_id: defaultCatId,
+          organization_id: ORGANIZATION_ID,
+          campus_id: CAMPUS_ID,
+          image_url: null,
+        }));
+
+        await supabase.from("products").insert(nuevosRegistros);
+      }
+
+      await loadData();
+      setMessage({
+        text: "✅ Menú sincronizado con los 7 productos oficiales. Ahora puedes asignarles su precio y foto abajo.",
+        isError: false,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error desconocido";
+      setMessage({ text: "Error sincronizando menú: " + msg, isError: true });
+    } finally {
+      setProcesandoMenu(false);
     }
   }
 
@@ -121,9 +310,25 @@ export default function AdminProductos() {
 
   return (
     <main style={{ background: "#E8F5E9", minHeight: "100vh", padding: "1.5rem", color: "#111111" }}>
-      <div style={{ maxWidth: "600px", margin: "0 auto" }}>
-        <div style={{ background: "#2E7D32", color: "#FFFFFF", padding: "1.2rem 1.5rem", borderRadius: "10px", marginBottom: "1.5rem", boxShadow: "0 4px 6px rgba(0,0,0,0.1)" }}>
-          <h1 style={{ margin: 0, fontSize: "1.5rem" }}>🍎 Administración de Productos</h1>
+      <div style={{ maxWidth: "760px", margin: "0 auto" }}>
+        <div style={{ background: "#2E7D32", color: "#FFFFFF", padding: "1.2rem 1.5rem", borderRadius: "10px", marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.8rem", boxShadow: "0 4px 6px rgba(0,0,0,0.1)" }}>
+          <h1 style={{ margin: 0, fontSize: "1.45rem" }}>🍎 Administración de Productos</h1>
+          <button
+            onClick={handleSyncMenuOficial}
+            disabled={procesandoMenu}
+            style={{
+              background: "#F59E0B",
+              color: "#111111",
+              border: "none",
+              padding: "0.55rem 1rem",
+              borderRadius: "8px",
+              fontWeight: 800,
+              fontSize: "0.88rem",
+              cursor: "pointer",
+            }}
+          >
+            {procesandoMenu ? "Sincronizando..." : "📋 Dejar solo los 7 productos del menú"}
+          </button>
         </div>
 
         {message && (
@@ -142,7 +347,7 @@ export default function AdminProductos() {
           </div>
         )}
 
-        {/* SECCIÓN: NUEVA CATEGORÍA */}
+        {/* SECCIÓN: PRODUCTOS ACTUALES EN EL MENÚ (CON FOTO Y PRECIO) */}
         <section
           style={{
             background: "#FFFFFF",
@@ -154,13 +359,157 @@ export default function AdminProductos() {
           }}
         >
           <h2 style={{ margin: "0 0 1rem 0", color: "#2E7D32", fontSize: "1.25rem" }}>
+            🍽️ Productos en tu menú ({products.length})
+          </h2>
+
+          {products.length === 0 ? (
+            <p style={{ color: "#4B5563" }}>No hay productos registrados. Usa el botón naranja de arriba para cargar tus 7 productos.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+              {products.map((prod) => (
+                <div
+                  key={prod.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    flexWrap: "wrap",
+                    gap: "1rem",
+                    padding: "1rem",
+                    borderRadius: "10px",
+                    border: "1px solid #D1D5DB",
+                    background: "#F9FAFB",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                    {prod.image_url ? (
+                      <img
+                        src={prod.image_url}
+                        alt={prod.name}
+                        style={{
+                          width: "68px",
+                          height: "68px",
+                          objectFit: "cover",
+                          borderRadius: "8px",
+                          border: "2px solid #81C784",
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          width: "68px",
+                          height: "68px",
+                          borderRadius: "8px",
+                          background: "#E5E7EB",
+                          color: "#6B7280",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: "0.75rem",
+                          fontWeight: 700,
+                          textAlign: "center",
+                          padding: "0.2rem",
+                        }}
+                      >
+                        Sin foto
+                      </div>
+                    )}
+
+                    <div>
+                      <strong style={{ display: "block", fontSize: "1.05rem", color: "#111111" }}>
+                        {prod.name}
+                      </strong>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.35rem" }}>
+                        <span style={{ fontSize: "0.9rem", fontWeight: 700, color: "#374151" }}>Precio: $</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          defaultValue={prod.price}
+                          onBlur={(e) => {
+                            const val = parseFloat(e.target.value);
+                            if (!isNaN(val) && val !== prod.price) {
+                              handleUpdateProductPrice(prod.id, val);
+                            }
+                          }}
+                          style={{
+                            width: "85px",
+                            padding: "0.3rem 0.5rem",
+                            borderRadius: "6px",
+                            border: "1px solid #9CA3AF",
+                            background: "#FFFFFF",
+                            color: "#111111",
+                            fontWeight: 700,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+                    <label
+                      style={{
+                        background: "#2E7D32",
+                        color: "#FFFFFF",
+                        padding: "0.5rem 0.85rem",
+                        borderRadius: "6px",
+                        fontWeight: 700,
+                        fontSize: "0.85rem",
+                        cursor: "pointer",
+                      }}
+                    >
+                      📷 {prod.image_url ? "Cambiar foto" : "Subir foto"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        style={{ display: "none" }}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleUpdateProductImage(prod.id, file);
+                        }}
+                      />
+                    </label>
+
+                    <button
+                      onClick={() => handleDeleteProduct(prod.id, prod.name)}
+                      style={{
+                        background: "#FEE2E2",
+                        color: "#B91C1C",
+                        border: "1px solid #FCA5A5",
+                        padding: "0.5rem 0.75rem",
+                        borderRadius: "6px",
+                        fontWeight: 700,
+                        fontSize: "0.85rem",
+                        cursor: "pointer",
+                      }}
+                    >
+                      🗑️ Eliminar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* SECCIÓN: NUEVA CATEGORÍA */}
+        <section
+          style={{
+            background: "#FFFFFF",
+            border: "2px solid #81C784",
+            padding: "1.5rem",
+            borderRadius: "12px",
+            marginBottom: "1.5rem",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+          }}
+        >
+          <h2 style={{ margin: "0 0 1rem 0", color: "#2E7D32", fontSize: "1.2rem" }}>
             📂 Nueva categoría
           </h2>
 
           <form onSubmit={handleAddCategory} style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
             <input
               type="text"
-              placeholder="Ej. Bebidas, Snacks, Comida..."
+              placeholder="Ej. Desayunos, Bebidas, Postres..."
               value={newCategoryName}
               onChange={(e) => setNewCategoryName(e.target.value)}
               required
@@ -182,35 +531,9 @@ export default function AdminProductos() {
               Agregar
             </button>
           </form>
-
-          {categories.length > 0 && (
-            <div style={{ marginTop: "1rem", paddingTop: "0.8rem", borderTop: "1px solid #E5E7EB" }}>
-              <span style={{ fontSize: "0.85rem", color: "#4B5563", fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>
-                Categorías existentes:
-              </span>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
-                {categories.map((cat) => (
-                  <span
-                    key={cat.id}
-                    style={{
-                      background: "#E8F5E9",
-                      color: "#1B5E20",
-                      border: "1px solid #81C784",
-                      padding: "0.25rem 0.65rem",
-                      borderRadius: "999px",
-                      fontSize: "0.85rem",
-                      fontWeight: 700,
-                    }}
-                  >
-                    {cat.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
         </section>
 
-        {/* SECCIÓN: NUEVO PRODUCTO */}
+        {/* SECCIÓN: NUEVO PRODUCTO CON IMAGEN */}
         <section
           style={{
             background: "#FFFFFF",
@@ -220,8 +543,8 @@ export default function AdminProductos() {
             boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
           }}
         >
-          <h2 style={{ margin: "0 0 1.2rem 0", color: "#2E7D32", fontSize: "1.25rem" }}>
-            🥪 Nuevo producto
+          <h2 style={{ margin: "0 0 1.2rem 0", color: "#2E7D32", fontSize: "1.2rem" }}>
+            🥪 Agregar producto manualmente
           </h2>
 
           <form onSubmit={handleAddProduct} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
@@ -229,7 +552,7 @@ export default function AdminProductos() {
               <label style={labelStyle}>Nombre del producto</label>
               <input
                 type="text"
-                placeholder="Ej. Sándwich de jamón"
+                placeholder="Ej. Chilaquiles rojos"
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
                 required
@@ -281,6 +604,25 @@ export default function AdminProductos() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label style={labelStyle}>Imagen de referencia (opcional)</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleFileSelectNew}
+                style={{ ...inputStyle, padding: "0.5rem" }}
+              />
+              {imageUrl && (
+                <div style={{ marginTop: "0.6rem" }}>
+                  <img
+                    src={imageUrl}
+                    alt="Vista previa"
+                    style={{ width: "90px", height: "90px", objectFit: "cover", borderRadius: "8px", border: "2px solid #2E7D32" }}
+                  />
+                </div>
+              )}
             </div>
 
             <button
