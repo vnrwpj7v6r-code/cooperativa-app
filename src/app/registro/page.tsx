@@ -39,7 +39,7 @@ export default function Registro() {
       return;
     }
 
-    // 2. Crear su perfil (el trigger valida que el correo sea del dominio correcto)
+    // 2. Crear su perfil
     const { error: profileError } = await supabase.from("profiles").insert({
       id: authData.user.id,
       organization_id: ORGANIZATION_ID,
@@ -88,7 +88,7 @@ export default function Registro() {
         />
         <input
           type="email"
-          placeholder="Correo institucional"
+          placeholder="Correo electrónico"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
