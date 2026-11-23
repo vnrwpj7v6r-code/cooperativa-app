@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/supabase/client";
@@ -49,72 +49,128 @@ export default function MisPedidos() {
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
   const [notificaciones, setNotificaciones] = useState<Notificacion[]>([]);
-  const [permisoNotif, setPermisoNotif] = useState<string>("default");
+  const [audioActivo, setAudioActivo] = useState(false);
 
-  useEffect(() => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      setPermisoNotif(Notification.permission);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
+  function obtenerAudioContext() {
+    if (typeof window === "undefined") return null;
+    if (!audioCtxRef.current) {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtx) {
+        audioCtxRef.current = new AudioCtx();
+      }
     }
-  }, []);
+    if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+      audioCtxRef.current.resume();
+    }
+    return audioCtxRef.current;
+  }
 
   function reproducirSonido() {
     try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx = new AudioCtx();
+      const ctx = obtenerAudioContext();
+      if (!ctx) return;
+
+      const now = ctx.currentTime;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(659.25, ctx.currentTime);
-      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.45);
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(659.25, now); // E5
+      osc.frequency.setValueAtTime(880, now + 0.16); // A5
+      osc.frequency.setValueAtTime(1046.5, now + 0.32); // C6
+      gain.gain.setValueAtTime(0.35, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.6);
+      osc.start(now);
+      osc.stop(now + 0.6);
     } catch (e) {
-      console.log("Sonido en espera de interacción");
+      console.log("Audio pendiente de interacción:", e);
     }
   }
 
   function activarAlertas() {
+    obtenerAudioContext();
+    setAudioActivo(true);
     reproducirSonido();
-    if ("Notification" in window) {
-      Notification.requestPermission().then((perm) => {
-        setPermisoNotif(perm);
-        if (perm === "granted") {
-          setNotificaciones((prev) => [
-            {
-              id: Date.now().toString(),
-              texto: "✅ Avisos con sonido activados correctamente.",
-              hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-            },
-            ...prev,
-          ]);
-        }
-      });
-    }
-  }
 
-  async function loadMyOrders(userId: string) {
-    const { data, error } = await supabase
-      .from("orders")
-      .select(`
-        id, status, payment_method, total_amount, pickup_code, created_at, is_paid,
-        order_items ( id, quantity, unit_price, product:products ( name ) )
-      `)
-      .eq("student_id", userId)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("Error cargando mis pedidos:", error);
+    if ("Notification" in window && Notification.permission !== "granted") {
+      Notification.requestPermission();
     }
-    setOrders((data as unknown as Order[]) ?? []);
-    setLoading(false);
+
+    setNotificaciones((prev) => [
+      {
+        id: Date.now().toString(),
+        texto: "✅ Avisos con sonido activados. Te notificaremos cada cambio de estado.",
+        hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      },
+      ...prev,
+    ]);
   }
 
   useEffect(() => {
-    let channel: any;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let knownStatuses: Record<string, string> | null = null;
+
+    const handleFirstClick = () => {
+      obtenerAudioContext();
+      setAudioActivo(true);
+    };
+    window.addEventListener("click", handleFirstClick, { once: true });
+
+    async function syncOrders(userId: string) {
+      const { data, error } = await supabase
+        .from("orders")
+        .select(`
+          id, status, payment_method, total_amount, pickup_code, created_at, is_paid,
+          order_items ( id, quantity, unit_price, product:products ( name ) )
+        `)
+        .eq("student_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Error cargando mis pedidos:", error);
+        setLoading(false);
+        return;
+      }
+
+      const typed = (data as unknown as Order[]) ?? [];
+      setOrders(typed);
+      setLoading(false);
+
+      if (knownStatuses === null) {
+        knownStatuses = {};
+        typed.forEach((o) => {
+          knownStatuses![o.id] = o.status;
+        });
+      } else {
+        typed.forEach((o) => {
+          const prevStatus = knownStatuses![o.id];
+          if (prevStatus && prevStatus !== o.status) {
+            const etiqueta = STATUS_LABELS[o.status] ?? o.status;
+            const mensaje = `Tu pedido #${o.pickup_code} cambió a: ${etiqueta}`;
+
+            reproducirSonido();
+
+            setNotificaciones((prev) => [
+              {
+                id: `${o.id}-${o.status}-${Date.now()}`,
+                texto: mensaje,
+                hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              },
+              ...prev,
+            ]);
+
+            if ("Notification" in window && Notification.permission === "granted") {
+              new Notification("🍎 Actualización de tu pedido", { body: mensaje });
+            }
+          }
+          knownStatuses![o.id] = o.status;
+        });
+      }
+    }
 
     async function init() {
       const { data: { session } } = await supabase.auth.getSession();
@@ -124,7 +180,7 @@ export default function MisPedidos() {
       }
 
       const userId = session.user.id;
-      await loadMyOrders(userId);
+      await syncOrders(userId);
 
       channel = supabase
         .channel(`mis-pedidos-${userId}`)
@@ -136,39 +192,23 @@ export default function MisPedidos() {
             table: "orders",
             filter: `student_id=eq.${userId}`,
           },
-          (payload) => {
-            const nuevoEstado = payload.new?.status as string;
-            const codigo = payload.new?.pickup_code as string;
-            const etiqueta = STATUS_LABELS[nuevoEstado] ?? nuevoEstado;
-            const mensaje = `Tu pedido #${codigo} cambió a: ${etiqueta}`;
-
-            reproducirSonido();
-
-            setNotificaciones((prev) => [
-              {
-                id: Date.now().toString(),
-                texto: mensaje,
-                hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              },
-              ...prev,
-            ]);
-
-            if ("Notification" in window && Notification.permission === "granted") {
-              new Notification("🍎 Actualización de tu pedido", { body: mensaje });
-            }
-
-            loadMyOrders(userId);
+          () => {
+            syncOrders(userId);
           }
         )
         .subscribe();
+
+      interval = setInterval(() => {
+        syncOrders(userId);
+      }, 6000);
     }
 
     init();
 
     return () => {
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
+      window.removeEventListener("click", handleFirstClick);
+      if (channel) supabase.removeChannel(channel);
+      if (interval) clearInterval(interval);
     };
   }, [router]);
 
@@ -180,7 +220,7 @@ export default function MisPedidos() {
     <main style={{ background: "#E8F5E9", minHeight: "100vh", padding: "1.5rem", color: "#111111" }}>
       <div style={{ maxWidth: "720px", margin: "0 auto" }}>
         
-        {/* SECCIÓN VISIBLE DE NOTIFICACIONES */}
+        {/* SECCIÓN DE NOTIFICACIONES */}
         <section
           style={{
             background: "#FFFFFF",
@@ -192,14 +232,14 @@ export default function MisPedidos() {
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.6rem" }}>
-            <h2 style={{ margin: 0, fontSize: "1.1rem", color: "#2E7D32", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <h2 style={{ margin: 0, fontSize: "1.1rem", color: "#2E7D32" }}>
               🔔 Notificaciones de tus pedidos
             </h2>
             <button
               onClick={activarAlertas}
               style={{
-                background: permisoNotif === "granted" ? "#DCFCE7" : "#F59E0B",
-                color: permisoNotif === "granted" ? "#15803D" : "#111111",
+                background: audioActivo ? "#10B981" : "#F59E0B",
+                color: audioActivo ? "#FFFFFF" : "#111111",
                 border: "none",
                 padding: "0.45rem 0.9rem",
                 borderRadius: "6px",
@@ -208,13 +248,13 @@ export default function MisPedidos() {
                 cursor: "pointer",
               }}
             >
-              {permisoNotif === "granted" ? "✅ Sonido activado" : "🔊 Activar sonido de aviso"}
+              {audioActivo ? "✅ Sonido activo (Probar timbre)" : "🔊 Activar sonido de aviso"}
             </button>
           </div>
 
           {notificaciones.length === 0 ? (
             <p style={{ margin: "0.6rem 0 0 0", fontSize: "0.9rem", color: "#4B5563" }}>
-              Mantén esta pantalla abierta: aquí aparecerán las alertas en tiempo real cuando preparen o tengan listo tu pedido.
+              Aquí aparecerán las alertas en vivo cuando preparen o tengan listo tu pedido.
             </p>
           ) : (
             <ul style={{ margin: "0.8rem 0 0 0", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
@@ -269,7 +309,6 @@ export default function MisPedidos() {
                     boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
                   }}
                 >
-                  {/* Encabezado: Código y Total con alto contraste */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #E5E7EB", paddingBottom: "0.75rem", marginBottom: "1rem" }}>
                     <div>
                       <span style={{ fontSize: "0.8rem", color: "#4B5563", fontWeight: 600, display: "block" }}>
@@ -300,7 +339,6 @@ export default function MisPedidos() {
                     </div>
                   </div>
 
-                  {/* Barra de progreso de 4 pasos legible */}
                   {order.status === "cancelado" ? (
                     <div style={{ background: "#FEE2E2", color: "#B91C1C", padding: "0.75rem", borderRadius: "8px", fontWeight: 800, textAlign: "center", marginBottom: "1rem" }}>
                       ❌ Pedido cancelado
@@ -344,7 +382,6 @@ export default function MisPedidos() {
                     </div>
                   )}
 
-                  {/* Lista de productos del pedido */}
                   <ul style={{ margin: 0, paddingLeft: "1.2rem", color: "#111111", fontSize: "0.95rem" }}>
                     {order.order_items.map((item) => (
                       <li key={item.id} style={{ marginBottom: "0.25rem" }}>
