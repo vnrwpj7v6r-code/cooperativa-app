@@ -63,21 +63,23 @@ export default function AdminPedidos() {
       const ctx = obtenerAudioContext();
       if (!ctx) return;
 
-      const now = ctx.currentTime;
-      const osc1 = ctx.createOscillator();
-      const gain1 = ctx.createGain();
-      osc1.connect(gain1);
-      gain1.connect(ctx.destination);
-      osc1.type = "triangle";
-      osc1.frequency.setValueAtTime(587.33, now); // D5
-      osc1.frequency.setValueAtTime(880, now + 0.16); // A5
-      osc1.frequency.setValueAtTime(1046.5, now + 0.32); // C6
-      gain1.gain.setValueAtTime(0.35, now);
-      gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.6);
-      osc1.start(now);
-      osc1.stop(now + 0.6);
+      // Reproducir doble timbre llamativo
+      [0, 0.35].forEach((delay) => {
+        const now = ctx.currentTime + delay;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(659.25, now); // Mi5
+        osc.frequency.setValueAtTime(880, now + 0.14); // La5
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+      });
     } catch (e) {
-      console.log("Audio pendiente de interacción:", e);
+      console.log("Audio en espera de interacción:", e);
     }
   }
 
@@ -91,8 +93,26 @@ export default function AdminPedidos() {
     }
   }
 
+  // Parpadeo en el título de la pestaña cuando hay un pedido nuevo sin cerrar
+  useEffect(() => {
+    if (!alertaNuevoPedido) {
+      document.title = "Pedidos | Cooperativa Escolar";
+      return;
+    }
+
+    let toggle = false;
+    const titleInterval = setInterval(() => {
+      document.title = toggle ? "🔔 ¡NUEVO PEDIDO!" : "🍎 Cooperativa Escolar";
+      toggle = !toggle;
+    }, 900);
+
+    return () => {
+      clearInterval(titleInterval);
+      document.title = "Pedidos | Cooperativa Escolar";
+    };
+  }, [alertaNuevoPedido]);
+
   async function loadOrders() {
-    // 1. Pedidos activos en curso
     const { data: activeData, error } = await supabase
       .from("orders")
       .select(`
@@ -110,7 +130,6 @@ export default function AdminPedidos() {
       const typedActive = activeData as unknown as Order[];
       setOrders(typedActive);
 
-      // Detectar pedidos nuevos de forma confiable
       if (knownOrderIdsRef.current === null) {
         knownOrderIdsRef.current = new Set(typedActive.map((o) => o.id));
       } else {
@@ -119,7 +138,7 @@ export default function AdminPedidos() {
           nuevos.forEach((n) => knownOrderIdsRef.current!.add(n.id));
           const ultimo = nuevos[nuevos.length - 1];
           reproducirAlertaSonora();
-          setAlertaNuevoPedido(`🔔 ¡Nuevo pedido recibido #${ultimo.pickup_code}!`);
+          setAlertaNuevoPedido(`🔔 ¡Nuevo pedido recibido #${ultimo.pickup_code} ($${ultimo.total_amount.toFixed(2)})!`);
 
           if ("Notification" in window && Notification.permission === "granted") {
             new Notification("🍎 Nuevo pedido en Cooperativa", {
@@ -130,7 +149,6 @@ export default function AdminPedidos() {
       }
     }
 
-    // 2. Historial de pedidos (entregados o cancelados)
     const { data: histData } = await supabase
       .from("orders")
       .select(`
@@ -146,7 +164,6 @@ export default function AdminPedidos() {
       setHistoryOrders(histData as unknown as Order[]);
     }
 
-    // 3. Desglose de ingresos cobrados (Efectivo vs Transferencia)
     const { data: incomeData } = await supabase
       .from("orders")
       .select("total_amount, payment_method")
@@ -194,7 +211,6 @@ export default function AdminPedidos() {
   }, [router]);
 
   useEffect(() => {
-    // Desbloquear audio al primer clic en cualquier parte de la pantalla
     const handleFirstClick = () => {
       obtenerAudioContext();
       setAudioActivo(true);
@@ -206,16 +222,16 @@ export default function AdminPedidos() {
     const channel = supabase
       .channel("orders-admin-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
-        setTimeout(() => {
-          loadOrders();
-        }, 500);
+        setTimeout(() => loadOrders(), 600);
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "order_items" }, () => {
+        setTimeout(() => loadOrders(), 300);
       })
       .subscribe();
 
-    // Respaldo automático cada 6 segundos por si el navegador pausa Realtime
     const interval = setInterval(() => {
       loadOrders();
-    }, 6000);
+    }, 5000);
 
     return () => {
       window.removeEventListener("click", handleFirstClick);
@@ -282,7 +298,7 @@ export default function AdminPedidos() {
             onClick={() => setAlertaNuevoPedido(null)}
             style={{ background: "#111", color: "#fff", border: "none", padding: "0.4rem 0.8rem", borderRadius: "6px", fontWeight: 700, cursor: "pointer" }}
           >
-            Cerrar
+            Entendido
           </button>
         </div>
       )}
