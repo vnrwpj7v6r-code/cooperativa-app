@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/supabase/client";
 
 export default function InventarioAdmin() {
-  // Aquí guardaremos los productos que vienen de Supabase
   const [productos, setProductos] = useState<any[]>([]);
   const [cargando, setCargando] = useState(true);
 
@@ -13,11 +12,11 @@ export default function InventarioAdmin() {
   }, []);
 
   async function cargarProductos() {
-    // IMPORTANTE: Cambia "productos" por el nombre real de tu tabla si está en inglés (ej. "products")
+    // Ya corregido con los nombres de tu base de datos
     const { data, error } = await supabase
-      .from("productos")
+      .from("products")
       .select("*")
-      .order("nombre"); // Cambia "nombre" por tu columna real (ej. "name")
+      .order("name");
 
     if (error) {
       console.error("Error cargando productos:", error);
@@ -28,10 +27,9 @@ export default function InventarioAdmin() {
   }
 
   async function handleActualizarStock(id: string, nuevoStock: number) {
-    // Esta función manda la actualización a Supabase
     const { error } = await supabase
-      .from("productos") // Asegúrate que este sea el nombre de tu tabla
-      .update({ stock: nuevoStock }) // Asegúrate que tu columna se llame "stock"
+      .from("products")
+      .update({ stock_current: nuevoStock })
       .eq("id", id);
 
     if (error) {
@@ -64,19 +62,18 @@ export default function InventarioAdmin() {
             }}
           >
             <div>
-              {/* Cambia prod.nombre si tu columna se llama diferente, por ejemplo prod.name */}
-              <h3 style={{ margin: 0, color: "#333" }}>{prod.nombre}</h3>
-              <p style={{ margin: 0, color: "#666", fontSize: "0.9rem" }}>Stock actual: {prod.stock}</p>
+              <h3 style={{ margin: 0, color: "#333" }}>{prod.name}</h3>
+              <p style={{ margin: 0, color: "#666", fontSize: "0.9rem" }}>Stock actual: {prod.stock_current}</p>
             </div>
             
             <div style={{ display: "flex", alignItems: "center", gap: "0.8rem" }}>
               <label style={{ fontSize: "0.9rem", color: "#666" }}>Nuevo stock:</label>
               <input 
                 type="number" 
-                defaultValue={prod.stock}
+                defaultValue={prod.stock_current}
                 onChange={(e) => {
                   const valor = parseInt(e.target.value) || 0;
-                  setProductos(productos.map(p => p.id === prod.id ? { ...p, stock: valor } : p));
+                  setProductos(productos.map(p => p.id === prod.id ? { ...p, stock_current: valor } : p));
                 }}
                 style={{ 
                   width: "70px", 
@@ -87,7 +84,7 @@ export default function InventarioAdmin() {
                 }}
               />
               <button 
-                onClick={() => handleActualizarStock(prod.id, prod.stock)}
+                onClick={() => handleActualizarStock(prod.id, prod.stock_current)}
                 style={{ 
                   background: "#2E7D32", 
                   color: "white", 
