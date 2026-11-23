@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/supabase/client";
 
 type OrderItem = {
   id: string;
-  product_id: string;
   quantity: number;
   unit_price: number;
   product: { name: string } | null;
@@ -20,24 +20,49 @@ type Order = {
   pickup_code: string;
   created_at: string;
   is_paid: boolean;
-  profiles: any;
   order_items: OrderItem[];
 };
 
-const STATUS_FLOW: Record<string, { next: string; label: string }> = {
-  recibido: { next: "en_preparacion", label: "Empezar preparación" },
-  en_preparacion: { next: "listo", label: "Marcar como listo" },
-  listo: { next: "entregado", label: "Marcar entregado" },
+const STATUS_INFO: Record<string, { label: string; bg: string; color: string; message: string }> = {
+  recibido: {
+    label: "📥 Recibido",
+    bg: "#E0F2FE",
+    color: "#0369A1",
+    message: "Tu pedido fue recibido por la cooperativa.",
+  },
+  en_preparacion: {
+    label: "👨‍🍳 En preparación",
+    bg: "#FEF3C7",
+    color: "#B45309",
+    message: "¡Ya están preparando tus alimentos!",
+  },
+  listo: {
+    label: "🎉 ¡Listo para recoger!",
+    bg: "#DCFCE7",
+    color: "#15803D",
+    message: "¡Tu pedido está listo! Pasa a recogerlo con tu código.",
+  },
+  entregado: {
+    label: "✅ Entregado",
+    bg: "#F3F4F6",
+    color: "#374151",
+    message: "Pedido entregado. ¡Buen provecho!",
+  },
+  cancelado: {
+    label: "❌ Cancelado",
+    bg: "#FEE2E2",
+    color: "#B91C1C",
+    message: "Este pedido fue cancelado.",
+  },
 };
 
-export default function AdminPedidos() {
+export default function MisPedidos() {
   const router = useRouter();
-  const [checking, setChecking] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [totalIngresos, setTotalIngresos] = useState(0);
-  const [alertaNuevoPedido, setAlertaNuevoPedido] = useState<string | null>(null);
+  const [notificacion, setNotificacion] = useState<string | null>(null);
 
-  function reproducirAlertaSonora() {
+  function reproducirSonido() {
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       const ctx = new AudioCtx();
@@ -46,268 +71,213 @@ export default function AdminPedidos() {
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.type = "sine";
-      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // Nota D5
-      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15); // Nota A5
+      osc.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15); // A5
       gain.gain.setValueAtTime(0.3, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
       osc.start();
       osc.stop(ctx.currentTime + 0.45);
     } catch (e) {
-      console.log("Audio bloqueado hasta interacción del usuario");
+      console.log("Sonido en espera de interacción");
     }
   }
 
-  function activarNotificaciones() {
-    reproducirAlertaSonora();
+  function activarAlertas() {
+    reproducirSonido();
     if ("Notification" in window) {
       Notification.requestPermission().then((perm) => {
         if (perm === "granted") {
-          alert("✅ Alertas sonoras y notificaciones activadas.");
+          alert("✅ Avisos activados. Te notificaremos cuando tu pedido cambie de estado.");
         }
       });
     }
   }
 
-  async function loadOrders() {
+  async function loadMyOrders(userId: string) {
     const { data, error } = await supabase
       .from("orders")
       .select(`
         id, status, payment_method, total_amount, pickup_code, created_at, is_paid,
-        profiles ( * ),
-        order_items ( id, product_id, quantity, unit_price, product:products ( name ) )
+        order_items ( id, quantity, unit_price, product:products ( name ) )
       `)
-      .neq("status", "entregado")
-      .neq("status", "cancelado")
-      .order("created_at", { ascending: true });
+      .eq("student_id", userId)
+      .order("created_at", { ascending: false });
 
-    if (error) console.error("Error cargando pedidos:", error);
-    setOrders((data as unknown as Order[]) ?? []);
-
-    const { data: incomeData } = await supabase
-      .from("orders")
-      .select("total_amount")
-      .eq("is_paid", true)
-      .neq("status", "cancelado");
-
-    if (incomeData) {
-      const sum = incomeData.reduce((acc, curr) => acc + curr.total_amount, 0);
-      setTotalIngresos(sum);
+    if (error) {
+      console.error("Error cargando mis pedidos:", error);
     }
+    setOrders((data as unknown as Order[]) ?? []);
+    setLoading(false);
   }
 
   useEffect(() => {
-    async function checkAccess() {
+    let channel: any;
+
+    async function init() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         router.push("/login");
         return;
       }
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", session.user.id)
-        .single();
 
-      if (!profile || (profile.role !== "operator" && profile.role !== "admin")) {
-        router.push("/catalogo");
-        return;
-      }
-      setChecking(false);
+      const userId = session.user.id;
+      await loadMyOrders(userId);
+
+      channel = supabase
+        .channel(`mis-pedidos-${userId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "orders",
+            filter: `student_id=eq.${userId}`,
+          },
+          (payload) => {
+            const nuevoEstado = payload.new?.status as string;
+            const codigo = payload.new?.pickup_code as string;
+            const info = STATUS_INFO[nuevoEstado];
+
+            reproducirSonido();
+            const textoAlerta = `🔔 Pedido #${codigo}: ${info ? info.label : nuevoEstado}`;
+            setNotificacion(textoAlerta);
+
+            if ("Notification" in window && Notification.permission === "granted") {
+              new Notification("🍎 Actualización de tu pedido", {
+                body: `Tu pedido #${codigo} ahora está: ${info ? info.label : nuevoEstado}`,
+              });
+            }
+
+            loadMyOrders(userId);
+          }
+        )
+        .subscribe();
     }
-    checkAccess();
-  }, [router]);
 
-  useEffect(() => {
-    loadOrders();
-
-    const channel = supabase
-      .channel("orders-admin-realtime")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "orders" }, (payload) => {
-        reproducirAlertaSonora();
-        const code = payload.new?.pickup_code ? `#${payload.new.pickup_code}` : "";
-        setAlertaNuevoPedido(`🔔 ¡Nuevo pedido recibido ${code}!`);
-        if ("Notification" in window && Notification.permission === "granted") {
-          new Notification("🍎 Nuevo pedido en Cooperativa", {
-            body: `Acaba de llegar el pedido ${code}.`,
-          });
-        }
-        loadOrders();
-      })
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "orders" }, () => {
-        loadOrders();
-      })
-      .subscribe();
+    init();
 
     return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  async function advanceStatus(order: Order, nextStatus: string) {
-    if (nextStatus === "entregado" && !order.is_paid) {
-      alert("⚠️ ¡No puedes entregar este pedido!\n\nPrimero debes hacer clic en '💰 REGISTRAR COBRO' para confirmar el pago.");
-      return;
-    }
-
-    // Si se marca como entregado, descontar el stock de cada producto
-    if (nextStatus === "entregado") {
-      for (const item of order.order_items) {
-        if (item.product_id) {
-          const { data: prod } = await supabase
-            .from("products")
-            .select("stock_current")
-            .eq("id", item.product_id)
-            .single();
-
-          if (prod) {
-            const nuevoStock = Math.max(0, (prod.stock_current ?? 0) - item.quantity);
-            await supabase
-              .from("products")
-              .update({ stock_current: nuevoStock })
-              .eq("id", item.product_id);
-          }
-        }
+      if (channel) {
+        supabase.removeChannel(channel);
       }
-    }
+    };
+  }, [router]);
 
-    await supabase
-      .from("orders")
-      .update({ status: nextStatus, updated_at: new Date().toISOString() })
-      .eq("id", order.id);
-
-    loadOrders();
-  }
-
-  async function togglePayment(orderId: string, currentPaidStatus: boolean) {
-    await supabase
-      .from("orders")
-      .update({ is_paid: !currentPaidStatus, updated_at: new Date().toISOString() })
-      .eq("id", orderId);
-
-    loadOrders();
-  }
-
-  if (checking) {
-    return <p style={{ padding: "2rem", color: "#333" }}>Verificando acceso...</p>;
+  if (loading) {
+    return <p style={{ padding: "2rem", color: "#111111" }}>Cargando tus pedidos...</p>;
   }
 
   return (
-    <main style={{ background: "#E8F5E9", minHeight: "100vh", padding: "1.5rem" }}>
-      {alertaNuevoPedido && (
-        <div style={{ background: "#F59E0B", color: "#111", padding: "1rem 1.5rem", borderRadius: "8px", marginBottom: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", fontWeight: 800, boxShadow: "0 4px 10px rgba(0,0,0,0.15)" }}>
-          <span>{alertaNuevoPedido}</span>
+    <main style={{ background: "#E8F5E9", minHeight: "100vh", padding: "1.5rem", color: "#111111" }}>
+      <div style={{ maxWidth: "700px", margin: "0 auto" }}>
+        {notificacion && (
+          <div style={{ background: "#F59E0B", color: "#111111", padding: "1rem 1.2rem", borderRadius: "10px", marginBottom: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", fontWeight: 800, boxShadow: "0 4px 10px rgba(0,0,0,0.15)" }}>
+            <span>{notificacion}</span>
+            <button
+              onClick={() => setNotificacion(null)}
+              style={{ background: "#111111", color: "#FFFFFF", border: "none", padding: "0.35rem 0.75rem", borderRadius: "6px", cursor: "pointer" }}
+            >
+              OK
+            </button>
+          </div>
+        )}
+
+        <div style={{ background: "#2E7D32", color: "#FFFFFF", padding: "1.2rem 1.5rem", borderRadius: "10px", marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.8rem" }}>
+          <h1 style={{ margin: 0, fontSize: "1.5rem" }}>🧾 Mis pedidos</h1>
           <button
-            onClick={() => setAlertaNuevoPedido(null)}
-            style={{ background: "#111", color: "#fff", border: "none", padding: "0.3rem 0.7rem", borderRadius: "4px", cursor: "pointer" }}
+            onClick={activarAlertas}
+            style={{ background: "rgba(255,255,255,0.2)", color: "#FFFFFF", border: "1px solid rgba(255,255,255,0.6)", padding: "0.4rem 0.8rem", borderRadius: "6px", fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}
           >
-            Cerrar
+            🔔 Activar avisos con sonido
           </button>
         </div>
-      )}
 
-      <div style={{ background: "#2E7D32", color: "white", padding: "1rem 1.5rem", borderRadius: "8px", marginBottom: "2rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem", boxShadow: "0 4px 6px rgba(0,0,0,0.1)" }}>
-        <div>
-          <h1 style={{ margin: "0 0 0.4rem 0" }}>Pedidos en curso ({orders.length})</h1>
-          <button
-            onClick={activarNotificaciones}
-            style={{ background: "rgba(255,255,255,0.2)", color: "white", border: "1px solid rgba(255,255,255,0.5)", padding: "0.35rem 0.75rem", borderRadius: "6px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" }}
-          >
-            🔔 Activar alertas con sonido
-          </button>
-        </div>
-        <div style={{ background: "rgba(255,255,255,0.2)", padding: "0.5rem 1rem", borderRadius: "8px", textAlign: "right" }}>
-          <span style={{ fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "1px", fontWeight: "bold" }}>Ingresos totales cobrados</span>
-          <p style={{ margin: 0, fontSize: "1.8rem", fontWeight: "bold" }}>${totalIngresos.toFixed(2)}</p>
-        </div>
-      </div>
+        {orders.length === 0 ? (
+          <div style={{ background: "#FFFFFF", padding: "1.5rem", borderRadius: "10px", border: "1px solid #D1D5DB" }}>
+            <p style={{ margin: 0, color: "#111111" }}>
+              Aún no has realizado pedidos.{" "}
+              <Link href="/catalogo" style={{ color: "#2E7D32", fontWeight: 700 }}>
+                Ver catálogo
+              </Link>
+            </p>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            {orders.map((order) => {
+              const info = STATUS_INFO[order.status] ?? {
+                label: order.status,
+                bg: "#F3F4F6",
+                color: "#111111",
+                message: "",
+              };
 
-      {orders.length === 0 && <p style={{ color: "#333", fontSize: "1.1rem" }}>No hay pedidos pendientes ahora mismo.</p>}
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "1.5rem" }}>
-        {orders.map((order) => {
-          const flow = STATUS_FLOW[order.status];
-          const minutesAgo = Math.floor((Date.now() - new Date(order.created_at).getTime()) / 60000);
-          const profileData = Array.isArray(order.profiles) ? order.profiles[0] : order.profiles;
-          const clientName = profileData?.full_name || profileData?.name || profileData?.nombre || "Cliente sin nombre";
-
-          return (
-            <div key={order.id} style={{ background: "#FFFFFF", border: "2px solid #81C784", borderRadius: "10px", padding: "1.2rem", display: "flex", flexDirection: "column", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid #eee", paddingBottom: "0.5rem", marginBottom: "0.5rem" }}>
-                <div>
-                  <span style={{ fontWeight: 800, fontSize: "1.3rem", display: "block", color: "#2E7D32" }}>#{order.pickup_code}</span>
-                  <span style={{ fontSize: "0.95rem", color: "#111", fontWeight: 700 }}>
-                    👤 {clientName}
-                  </span>
-                </div>
-                <span style={{ fontSize: "0.85rem", color: "#555", fontWeight: 600, background: "#f5f5f5", padding: "0.2rem 0.5rem", borderRadius: "4px" }}>
-                  hace {minutesAgo} min
-                </span>
-              </div>
-
-              <p style={{ margin: "0.5rem 0", fontSize: "0.9rem", textTransform: "uppercase", fontWeight: 800, color: "#1565C0" }}>
-                ESTADO: {order.status.replace("_", " ")}
-              </p>
-
-              <ul style={{ margin: "0.5rem 0", paddingLeft: "1.2rem", flex: 1, color: "#222", fontWeight: 500 }}>
-                {order.order_items.map((item) => (
-                  <li key={item.id} style={{ marginBottom: "0.3rem" }}>
-                    <strong>{item.quantity}x</strong> {item.product?.name ?? "Producto"}
-                  </li>
-                ))}
-              </ul>
-
-              <div style={{ background: "#F9FAFB", padding: "1rem", borderRadius: "8px", margin: "1rem 0 0.5rem 0", border: "1px solid #E5E7EB" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-                  <p style={{ margin: 0, color: "#111", fontSize: "1.1rem" }}>
-                    Total: <strong style={{ fontSize: "1.2rem", color: "#2E7D32" }}>${order.total_amount.toFixed(2)}</strong>
-                  </p>
-                  <span style={{ fontSize: "0.85rem", color: "#4B5563", background: "#E5E7EB", padding: "0.3rem 0.6rem", borderRadius: "6px", fontWeight: "bold" }}>
-                    {order.payment_method}
-                  </span>
-                </div>
-                
-                <button
-                  onClick={() => togglePayment(order.id, order.is_paid)}
+              return (
+                <div
+                  key={order.id}
                   style={{
-                    width: "100%",
-                    background: order.is_paid ? "#10B981" : "#F59E0B",
-                    color: order.is_paid ? "white" : "#111",
-                    border: "none",
-                    padding: "0.8rem",
-                    borderRadius: "6px",
-                    fontWeight: 800,
-                    fontSize: "0.95rem",
-                    cursor: "pointer",
-                    boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+                    background: "#FFFFFF",
+                    border: "2px solid #81C784",
+                    borderRadius: "12px",
+                    padding: "1.2rem",
+                    boxShadow: "0 2px 6px rgba(0,0,0,0.06)",
                   }}
                 >
-                  {order.is_paid ? "✅ PAGO RECIBIDO" : "💰 REGISTRAR COBRO"}
-                </button>
-              </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem", borderBottom: "1px solid #E5E7EB", paddingBottom: "0.75rem", marginBottom: "0.75rem" }}>
+                    <div>
+                      <span style={{ fontSize: "0.85rem", color: "#4B5563", display: "block" }}>Código de entrega</span>
+                      <strong style={{ fontSize: "1.4rem", color: "#2E7D32" }}>#{order.pickup_code}</strong>
+                    </div>
 
-              {flow && (
-                <button
-                  onClick={() => advanceStatus(order, flow.next)}
-                  style={{
-                    width: "100%",
-                    marginTop: "0.5rem",
-                    background: "#2E7D32",
-                    color: "white",
-                    border: "none",
-                    padding: "0.8rem",
-                    borderRadius: "6px",
-                    fontWeight: 800,
-                    fontSize: "1rem",
-                    cursor: "pointer",
-                    boxShadow: "0 2px 4px rgba(0,0,0,0.15)"
-                  }}
-                >
-                  {flow.label}
-                </button>
-              )}
-            </div>
-          );
-        })}
+                    <span
+                      style={{
+                        background: info.bg,
+                        color: info.color,
+                        padding: "0.45rem 0.9rem",
+                        borderRadius: "999px",
+                        fontWeight: 800,
+                        fontSize: "0.95rem",
+                      }}
+                    >
+                      {info.label}
+                    </span>
+                  </div>
+
+                  {info.message && (
+                    <p style={{ margin: "0 0 0.8rem 0", color: "#1F2937", fontWeight: 600, fontSize: "0.95rem" }}>
+                      {info.message}
+                    </p>
+                  )}
+
+                  <ul style={{ margin: "0 0 1rem 0", paddingLeft: "1.2rem", color: "#111111" }}>
+                    {order.order_items.map((item) => (
+                      <li key={item.id} style={{ marginBottom: "0.25rem" }}>
+                        <strong>{item.quantity}x</strong> {item.product?.name ?? "Producto"}
+                      </li>
+                    ))}
+                  </ul>
+
+                  <div style={{ background: "#F9FAFB", padding: "0.8rem", borderRadius: "8px", border: "1px solid #E5E7EB", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
+                    <span style={{ color: "#111111", fontSize: "1rem" }}>
+                      Total: <strong style={{ color: "#2E7D32" }}>${order.total_amount.toFixed(2)}</strong> ({order.payment_method})
+                    </span>
+                    <span
+                      style={{
+                        background: order.is_paid ? "#DCFCE7" : "#FEF3C7",
+                        color: order.is_paid ? "#15803D" : "#B45309",
+                        padding: "0.25rem 0.65rem",
+                        borderRadius: "6px",
+                        fontWeight: 700,
+                        fontSize: "0.85rem",
+                      }}
+                    >
+                      {order.is_paid ? "✅ Pagado" : "⏳ Pendiente de pago"}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </main>
   );
