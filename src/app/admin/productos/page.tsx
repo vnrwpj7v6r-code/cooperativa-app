@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/supabase/client";
 
@@ -59,6 +59,217 @@ function comprimirImagen(file: File): Promise<string> {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+function ProductRow({
+  prod,
+  onSaveDetails,
+  onUpdateImage,
+  onDelete,
+}: {
+  prod: Product;
+  onSaveDetails: (id: string, newName: string, newPrice: number) => Promise<void>;
+  onUpdateImage: (id: string, file: File) => Promise<void>;
+  onDelete: (id: string, name: string) => Promise<void>;
+}) {
+  const [editName, setEditName] = useState(prod.name);
+  const [editPrice, setEditPrice] = useState(prod.price.toString());
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setEditName(prod.name);
+    setEditPrice(prod.price.toString());
+  }, [prod.name, prod.price]);
+
+  const parsedPrice = parseFloat(editPrice);
+  const hasChanges =
+    editName.trim() !== prod.name ||
+    (!isNaN(parsedPrice) && parsedPrice !== prod.price);
+
+  async function handleSave() {
+    if (!editName.trim()) {
+      alert("El nombre del producto no puede estar vacío.");
+      return;
+    }
+    if (isNaN(parsedPrice) || parsedPrice < 0) {
+      alert("Ingresa un precio válido.");
+      return;
+    }
+    setSaving(true);
+    await onSaveDetails(prod.id, editName.trim(), parsedPrice);
+    setSaving(false);
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: "1rem",
+        padding: "1rem",
+        borderRadius: "10px",
+        border: hasChanges ? "2px solid #F59E0B" : "1px solid #D1D5DB",
+        background: "#F9FAFB",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "1rem", flex: 1, minWidth: "240px" }}>
+        {prod.image_url ? (
+          <img
+            src={prod.image_url}
+            alt={prod.name}
+            style={{
+              width: "72px",
+              height: "72px",
+              objectFit: "cover",
+              borderRadius: "8px",
+              border: "2px solid #81C784",
+              flexShrink: 0,
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              width: "72px",
+              height: "72px",
+              borderRadius: "8px",
+              background: "#E5E7EB",
+              color: "#6B7280",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "0.75rem",
+              fontWeight: 700,
+              textAlign: "center",
+              padding: "0.2rem",
+              flexShrink: 0,
+            }}
+          >
+            Sin foto
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", flex: 1 }}>
+          <div>
+            <label style={{ fontSize: "0.75rem", fontWeight: 700, color: "#4B5563", display: "block", marginBottom: "0.15rem" }}>
+              Nombre del producto:
+            </label>
+            <input
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleSave();
+                }
+              }}
+              style={{
+                width: "100%",
+                maxWidth: "260px",
+                padding: "0.4rem 0.6rem",
+                borderRadius: "6px",
+                border: "1px solid #9CA3AF",
+                background: "#FFFFFF",
+                color: "#111111",
+                fontWeight: 700,
+                fontSize: "0.98rem",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "#374151" }}>Precio: $</span>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={editPrice}
+              onChange={(e) => setEditPrice(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleSave();
+                }
+              }}
+              style={{
+                width: "90px",
+                padding: "0.35rem 0.5rem",
+                borderRadius: "6px",
+                border: "1px solid #9CA3AF",
+                background: "#FFFFFF",
+                color: "#111111",
+                fontWeight: 700,
+                fontSize: "0.95rem",
+              }}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            background: hasChanges ? "#F59E0B" : "#1565C0",
+            color: hasChanges ? "#111111" : "#FFFFFF",
+            border: "none",
+            padding: "0.5rem 0.85rem",
+            borderRadius: "6px",
+            fontWeight: 800,
+            fontSize: "0.85rem",
+            cursor: "pointer",
+          }}
+        >
+          {saving ? "Guardando..." : "💾 Guardar"}
+        </button>
+
+        <label
+          style={{
+            background: "#2E7D32",
+            color: "#FFFFFF",
+            padding: "0.5rem 0.85rem",
+            borderRadius: "6px",
+            fontWeight: 700,
+            fontSize: "0.85rem",
+            cursor: "pointer",
+          }}
+        >
+          📷 {prod.image_url ? "Cambiar foto" : "Subir foto"}
+          <input
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onUpdateImage(prod.id, file);
+            }}
+          />
+        </label>
+
+        <button
+          type="button"
+          onClick={() => onDelete(prod.id, prod.name)}
+          style={{
+            background: "#FEE2E2",
+            color: "#B91C1C",
+            border: "1px solid #FCA5A5",
+            padding: "0.5rem 0.75rem",
+            borderRadius: "6px",
+            fontWeight: 700,
+            fontSize: "0.85rem",
+            cursor: "pointer",
+          }}
+        >
+          🗑️ Eliminar
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function AdminProductos() {
@@ -173,6 +384,21 @@ export default function AdminProductos() {
     }
   }
 
+  async function handleSaveProductDetails(productId: string, newName: string, newPrice: number) {
+    setMessage(null);
+    const { error } = await supabase
+      .from("products")
+      .update({ name: newName, price: newPrice })
+      .eq("id", productId);
+
+    if (error) {
+      setMessage({ text: "Error actualizando producto: " + error.message, isError: true });
+    } else {
+      setMessage({ text: `✅ "${newName}" actualizado correctamente.`, isError: false });
+      await loadData();
+    }
+  }
+
   async function handleUpdateProductImage(productId: string, file: File) {
     try {
       const compressed = await comprimirImagen(file);
@@ -192,32 +418,18 @@ export default function AdminProductos() {
     }
   }
 
-  async function handleUpdateProductPrice(productId: string, newPrice: number) {
-    const { error } = await supabase
-      .from("products")
-      .update({ price: newPrice })
-      .eq("id", productId);
-
-    if (error) {
-      setMessage({ text: "Error actualizando precio: " + error.message, isError: true });
-    } else {
-      setMessage({ text: "✅ Precio actualizado.", isError: false });
-      loadData();
-    }
-  }
-
-  async function handleDeleteProduct(productId: string, productName: string) {
-    if (!confirm(`¿Seguro que deseas eliminar "${productName}" del menú?`)) return;
+  async function handleDeleteProduct(productId: string, prodName: string) {
+    if (!confirm(`¿Seguro que deseas eliminar "${prodName}" del menú?`)) return;
 
     const { error } = await supabase.from("products").delete().eq("id", productId);
 
     if (error) {
       setMessage({
-        text: `No se pudo borrar "${productName}" porque tiene pedidos históricos asociados. Puedes poner su stock en 0 en Inventario.`,
+        text: `No se pudo borrar "${prodName}" porque tiene pedidos históricos asociados. Puedes poner su stock en 0 en Inventario.`,
         isError: true,
       });
     } else {
-      setMessage({ text: `🗑️ "${productName}" eliminado del menú.`, isError: false });
+      setMessage({ text: `🗑️ "${prodName}" eliminado del menú.`, isError: false });
       loadData();
     }
   }
@@ -231,7 +443,6 @@ export default function AdminProductos() {
     setMessage(null);
 
     try {
-      // 1. Asegurar que exista al menos una categoría
       let defaultCatId = categories[0]?.id;
       if (!defaultCatId) {
         const { data: newCat } = await supabase
@@ -244,14 +455,12 @@ export default function AdminProductos() {
 
       const oficialesLower = MENU_OFICIAL.map((n) => n.toLowerCase().trim());
 
-      // 2. Eliminar productos fuera de los 7 oficiales
       for (const prod of products) {
         if (!oficialesLower.includes(prod.name.toLowerCase().trim())) {
           await supabase.from("products").delete().eq("id", prod.id);
         }
       }
 
-      // 3. Insertar los que falten de los 7 oficiales
       const actualesLower = products.map((p) => p.name.toLowerCase().trim());
       const faltantes = MENU_OFICIAL.filter(
         (nombre) => !actualesLower.includes(nombre.toLowerCase().trim())
@@ -310,7 +519,7 @@ export default function AdminProductos() {
 
   return (
     <main style={{ background: "#E8F5E9", minHeight: "100vh", padding: "1.5rem", color: "#111111" }}>
-      <div style={{ maxWidth: "760px", margin: "0 auto" }}>
+      <div style={{ maxWidth: "820px", margin: "0 auto" }}>
         <div style={{ background: "#2E7D32", color: "#FFFFFF", padding: "1.2rem 1.5rem", borderRadius: "10px", marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.8rem", boxShadow: "0 4px 6px rgba(0,0,0,0.1)" }}>
           <h1 style={{ margin: 0, fontSize: "1.45rem" }}>🍎 Administración de Productos</h1>
           <button
@@ -347,7 +556,7 @@ export default function AdminProductos() {
           </div>
         )}
 
-        {/* SECCIÓN: PRODUCTOS ACTUALES EN EL MENÚ (CON FOTO Y PRECIO) */}
+        {/* SECCIÓN: PRODUCTOS ACTUALES EN EL MENÚ (EDITAR NOMBRE, PRECIO Y FOTO) */}
         <section
           style={{
             background: "#FFFFFF",
@@ -367,125 +576,13 @@ export default function AdminProductos() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
               {products.map((prod) => (
-                <div
+                <ProductRow
                   key={prod.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    flexWrap: "wrap",
-                    gap: "1rem",
-                    padding: "1rem",
-                    borderRadius: "10px",
-                    border: "1px solid #D1D5DB",
-                    background: "#F9FAFB",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-                    {prod.image_url ? (
-                      <img
-                        src={prod.image_url}
-                        alt={prod.name}
-                        style={{
-                          width: "68px",
-                          height: "68px",
-                          objectFit: "cover",
-                          borderRadius: "8px",
-                          border: "2px solid #81C784",
-                        }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          width: "68px",
-                          height: "68px",
-                          borderRadius: "8px",
-                          background: "#E5E7EB",
-                          color: "#6B7280",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: "0.75rem",
-                          fontWeight: 700,
-                          textAlign: "center",
-                          padding: "0.2rem",
-                        }}
-                      >
-                        Sin foto
-                      </div>
-                    )}
-
-                    <div>
-                      <strong style={{ display: "block", fontSize: "1.05rem", color: "#111111" }}>
-                        {prod.name}
-                      </strong>
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.35rem" }}>
-                        <span style={{ fontSize: "0.9rem", fontWeight: 700, color: "#374151" }}>Precio: $</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          defaultValue={prod.price}
-                          onBlur={(e) => {
-                            const val = parseFloat(e.target.value);
-                            if (!isNaN(val) && val !== prod.price) {
-                              handleUpdateProductPrice(prod.id, val);
-                            }
-                          }}
-                          style={{
-                            width: "85px",
-                            padding: "0.3rem 0.5rem",
-                            borderRadius: "6px",
-                            border: "1px solid #9CA3AF",
-                            background: "#FFFFFF",
-                            color: "#111111",
-                            fontWeight: 700,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
-                    <label
-                      style={{
-                        background: "#2E7D32",
-                        color: "#FFFFFF",
-                        padding: "0.5rem 0.85rem",
-                        borderRadius: "6px",
-                        fontWeight: 700,
-                        fontSize: "0.85rem",
-                        cursor: "pointer",
-                      }}
-                    >
-                      📷 {prod.image_url ? "Cambiar foto" : "Subir foto"}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        style={{ display: "none" }}
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleUpdateProductImage(prod.id, file);
-                        }}
-                      />
-                    </label>
-
-                    <button
-                      onClick={() => handleDeleteProduct(prod.id, prod.name)}
-                      style={{
-                        background: "#FEE2E2",
-                        color: "#B91C1C",
-                        border: "1px solid #FCA5A5",
-                        padding: "0.5rem 0.75rem",
-                        borderRadius: "6px",
-                        fontWeight: 700,
-                        fontSize: "0.85rem",
-                        cursor: "pointer",
-                      }}
-                    >
-                      🗑️ Eliminar
-                    </button>
-                  </div>
-                </div>
+                  prod={prod}
+                  onSaveDetails={handleSaveProductDetails}
+                  onUpdateImage={handleUpdateProductImage}
+                  onDelete={handleDeleteProduct}
+                />
               ))}
             </div>
           )}
