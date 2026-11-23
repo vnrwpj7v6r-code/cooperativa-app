@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/supabase/client";
@@ -39,78 +39,19 @@ export default function AdminPedidos() {
   const [historyOrders, setHistoryOrders] = useState<Order[]>([]);
   const [ingresosEfectivo, setIngresosEfectivo] = useState(0);
   const [ingresosTransferencia, setIngresosTransferencia] = useState(0);
-  const [alertaNuevoPedido, setAlertaNuevoPedido] = useState<string | null>(null);
   const [audioActivo, setAudioActivo] = useState(false);
 
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const knownOrderIdsRef = useRef<Set<string> | null>(null);
-
-  function obtenerAudioContext() {
-    if (typeof window === "undefined") return null;
-    if (!audioCtxRef.current) {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioCtx) {
-        audioCtxRef.current = new AudioCtx();
-      }
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setAudioActivo(localStorage.getItem("coop_audio_enabled") === "true");
     }
-    if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
-      audioCtxRef.current.resume();
-    }
-    return audioCtxRef.current;
-  }
-
-  function reproducirAlertaSonora() {
-    try {
-      const ctx = obtenerAudioContext();
-      if (!ctx) return;
-
-      [0, 0.35].forEach((delay) => {
-        const now = ctx.currentTime + delay;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(659.25, now); // Mi5
-        osc.frequency.setValueAtTime(880, now + 0.14); // La5
-        gain.gain.setValueAtTime(0.4, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
-        osc.start(now);
-        osc.stop(now + 0.3);
-      });
-    } catch (e) {
-      console.log("Audio en espera de interacción:", e);
-    }
-  }
+  }, []);
 
   function activarYProbarAlertas() {
-    obtenerAudioContext();
+    localStorage.setItem("coop_audio_enabled", "true");
     setAudioActivo(true);
-    reproducirAlertaSonora();
-
-    if ("Notification" in window && Notification.permission !== "granted") {
-      Notification.requestPermission();
-    }
+    window.dispatchEvent(new Event("coop-audio-activate"));
   }
-
-  // Parpadeo en el título de la pestaña cuando hay un pedido nuevo sin cerrar
-  useEffect(() => {
-    if (!alertaNuevoPedido) {
-      document.title = "Pedidos | Cooperativa Escolar";
-      return;
-    }
-
-    let toggle = false;
-    const titleInterval = setInterval(() => {
-      document.title = toggle ? "🔔 ¡NUEVO PEDIDO!" : "🍎 Cooperativa Escolar";
-      toggle = !toggle;
-    }, 900);
-
-    return () => {
-      clearInterval(titleInterval);
-      document.title = "Pedidos | Cooperativa Escolar";
-    };
-  }, [alertaNuevoPedido]);
 
   async function loadOrders() {
     const { data: activeData, error } = await supabase
@@ -127,26 +68,7 @@ export default function AdminPedidos() {
     if (error) {
       console.error("Error cargando pedidos activos:", error);
     } else if (activeData) {
-      const typedActive = activeData as unknown as Order[];
-      setOrders(typedActive);
-
-      if (knownOrderIdsRef.current === null) {
-        knownOrderIdsRef.current = new Set(typedActive.map((o) => o.id));
-      } else {
-        const nuevos = typedActive.filter((o) => !knownOrderIdsRef.current!.has(o.id));
-        if (nuevos.length > 0) {
-          nuevos.forEach((n) => knownOrderIdsRef.current!.add(n.id));
-          const ultimo = nuevos[nuevos.length - 1];
-          reproducirAlertaSonora();
-          setAlertaNuevoPedido(`🔔 ¡Nuevo pedido recibido #${ultimo.pickup_code} ($${ultimo.total_amount.toFixed(2)})!`);
-
-          if ("Notification" in window && Notification.permission === "granted") {
-            new Notification("🍎 Nuevo pedido en Cooperativa", {
-              body: `Pedido #${ultimo.pickup_code} por $${ultimo.total_amount.toFixed(2)}`,
-            });
-          }
-        }
-      }
+      setOrders(activeData as unknown as Order[]);
     }
 
     const { data: histData } = await supabase
@@ -211,18 +133,12 @@ export default function AdminPedidos() {
   }, [router]);
 
   useEffect(() => {
-    const handleFirstClick = () => {
-      obtenerAudioContext();
-      setAudioActivo(true);
-    };
-    window.addEventListener("click", handleFirstClick, { once: true });
-
     loadOrders();
 
     const channel = supabase
-      .channel("orders-admin-realtime")
+      .channel("orders-admin-list")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
-        setTimeout(() => loadOrders(), 600);
+        setTimeout(() => loadOrders(), 500);
       })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "order_items" }, () => {
         setTimeout(() => loadOrders(), 300);
@@ -234,7 +150,6 @@ export default function AdminPedidos() {
     }, 5000);
 
     return () => {
-      window.removeEventListener("click", handleFirstClick);
       supabase.removeChannel(channel);
       clearInterval(interval);
     };
@@ -291,18 +206,6 @@ export default function AdminPedidos() {
 
   return (
     <main style={{ background: "#E8F5E9", minHeight: "100vh", padding: "1.5rem" }}>
-      {alertaNuevoPedido && (
-        <div style={{ background: "#F59E0B", color: "#111", padding: "1rem 1.5rem", borderRadius: "8px", marginBottom: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", fontWeight: 800, boxShadow: "0 4px 10px rgba(0,0,0,0.15)" }}>
-          <span style={{ fontSize: "1.05rem" }}>{alertaNuevoPedido}</span>
-          <button
-            onClick={() => setAlertaNuevoPedido(null)}
-            style={{ background: "#111", color: "#fff", border: "none", padding: "0.4rem 0.8rem", borderRadius: "6px", fontWeight: 700, cursor: "pointer" }}
-          >
-            Entendido
-          </button>
-        </div>
-      )}
-
       {/* Encabezado con desglose de ingresos y accesos rápidos */}
       <div style={{ background: "#2E7D32", color: "white", padding: "1.2rem 1.5rem", borderRadius: "10px", marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem", boxShadow: "0 4px 6px rgba(0,0,0,0.1)" }}>
         <div>
@@ -446,7 +349,7 @@ export default function AdminPedidos() {
                         {order.payment_method === "transferencia" ? "💳 Transferencia" : "💵 Efectivo"}
                       </span>
                     </div>
-                    
+
                     <button
                       onClick={() => togglePayment(order.id, order.is_paid)}
                       style={{
