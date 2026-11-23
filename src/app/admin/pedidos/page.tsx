@@ -101,9 +101,8 @@ export default function AdminPedidos() {
   }, []);
 
   async function advanceStatus(orderId: string, nextStatus: string, isPaid: boolean) {
-    // CANDADO: Evitar que entreguen si no han marcado como pagado (a menos que lo cancelen)
     if (nextStatus === "entregado" && !isPaid) {
-      alert("⚠️ ¡No puedes entregar este pedido!\n\nPrimero debes hacer clic en el botón rojo de 'No pagado' para registrar el cobro.");
+      alert("⚠️ ¡No puedes entregar este pedido!\n\nPrimero debes hacer clic en '💰 REGISTRAR COBRO' para confirmar el pago.");
       return;
     }
 
@@ -140,9 +139,8 @@ export default function AdminPedidos() {
         {orders.map((order) => {
           const flow = STATUS_FLOW[order.status];
           const minutesAgo = Math.floor((Date.now() - new Date(order.created_at).getTime()) / 60000);
-          
-          // Buscar el nombre en cualquier campo posible
-          const clientName = order.profiles?.full_name || order.profiles?.name || order.profiles?.nombre || "Cliente sin nombre";
+          const profileData = Array.isArray(order.profiles) ? order.profiles[0] : order.profiles;
+          const clientName = profileData?.full_name || profileData?.name || profileData?.nombre || "Cliente sin nombre";
 
           return (
             <div key={order.id} style={{ background: "#FFFFFF", border: "2px solid #81C784", borderRadius: "10px", padding: "1.2rem", display: "flex", flexDirection: "column", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
@@ -174,28 +172,33 @@ export default function AdminPedidos() {
               </ul>
 
               {/* Sección de pago */}
-              <div style={{ background: "#F5F5F5", padding: "1rem", borderRadius: "8px", margin: "1rem 0 0.5rem 0", border: "1px solid #E0E0E0" }}>
-                <p style={{ margin: "0 0 0.8rem 0", color: "#111", fontSize: "1.1rem" }}>
-                  Total a cobrar: <strong style={{ fontSize: "1.2rem", color: "#2E7D32" }}>${order.total_amount.toFixed(2)}</strong> <br/>
-                  <span style={{ fontSize: "0.85rem", color: "#666" }}>Vía {order.payment_method}</span>
-                </p>
+              <div style={{ background: "#F9FAFB", padding: "1rem", borderRadius: "8px", margin: "1rem 0 0.5rem 0", border: "1px solid #E5E7EB" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+                  <p style={{ margin: 0, color: "#111", fontSize: "1.1rem" }}>
+                    Total: <strong style={{ fontSize: "1.2rem", color: "#2E7D32" }}>${order.total_amount.toFixed(2)}</strong>
+                  </p>
+                  <span style={{ fontSize: "0.85rem", color: "#4B5563", background: "#E5E7EB", padding: "0.3rem 0.6rem", borderRadius: "6px", fontWeight: "bold" }}>
+                    {order.payment_method}
+                  </span>
+                </div>
                 
                 <button
                   onClick={() => togglePayment(order.id, order.is_paid)}
                   style={{
                     width: "100%",
-                    background: order.is_paid ? "#4CAF50" : "#f44336",
-                    color: "white",
+                    background: order.is_paid ? "#10B981" : "#F59E0B",
+                    color: order.is_paid ? "white" : "#111",
                     border: "none",
-                    padding: "0.7rem",
+                    padding: "0.8rem",
                     borderRadius: "6px",
-                    fontWeight: 700,
-                    fontSize: "1rem",
+                    fontWeight: 800,
+                    fontSize: "0.95rem",
                     cursor: "pointer",
-                    boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+                    boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+                    transition: "all 0.2s"
                   }}
                 >
-                  {order.is_paid ? "✅ DINERO RECIBIDO" : "❌ MARCAR COMO PAGADO"}
+                  {order.is_paid ? "✅ PAGO RECIBIDO" : "💰 REGISTRAR COBRO"}
                 </button>
               </div>
 
