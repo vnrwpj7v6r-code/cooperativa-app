@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/supabase/client";
 
 type OrderItem = {
@@ -63,7 +64,6 @@ export default function AdminPedidos() {
       const ctx = obtenerAudioContext();
       if (!ctx) return;
 
-      // Reproducir doble timbre llamativo
       [0, 0.35].forEach((delay) => {
         const now = ctx.currentTime + delay;
         const osc = ctx.createOscillator();
@@ -303,16 +303,43 @@ export default function AdminPedidos() {
         </div>
       )}
 
-      {/* Encabezado con desglose de ingresos */}
+      {/* Encabezado con desglose de ingresos y accesos rápidos */}
       <div style={{ background: "#2E7D32", color: "white", padding: "1.2rem 1.5rem", borderRadius: "10px", marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem", boxShadow: "0 4px 6px rgba(0,0,0,0.1)" }}>
         <div>
-          <h1 style={{ margin: "0 0 0.5rem 0", fontSize: "1.6rem" }}>Panel de Pedidos</h1>
-          <button
-            onClick={activarYProbarAlertas}
-            style={{ background: audioActivo ? "#10B981" : "#F59E0B", color: audioActivo ? "#FFFFFF" : "#111111", border: "none", padding: "0.45rem 0.9rem", borderRadius: "6px", fontSize: "0.85rem", fontWeight: 800, cursor: "pointer" }}
-          >
-            {audioActivo ? "🔔 Alertas activas (Probar timbre)" : "🔇 Activar alertas con sonido"}
-          </button>
+          <h1 style={{ margin: "0 0 0.6rem 0", fontSize: "1.6rem" }}>Panel de Pedidos</h1>
+          <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
+            <button
+              onClick={activarYProbarAlertas}
+              style={{
+                background: audioActivo ? "#10B981" : "#F59E0B",
+                color: audioActivo ? "#FFFFFF" : "#111111",
+                border: "none",
+                padding: "0.45rem 0.9rem",
+                borderRadius: "6px",
+                fontSize: "0.85rem",
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              {audioActivo ? "🔔 Alertas activas (Probar timbre)" : "🔇 Activar alertas con sonido"}
+            </button>
+
+            <Link
+              href="/admin/usuarios"
+              style={{
+                display: "inline-block",
+                background: "#FFFFFF",
+                color: "#2E7D32",
+                padding: "0.45rem 0.9rem",
+                borderRadius: "6px",
+                fontSize: "0.85rem",
+                fontWeight: 800,
+                textDecoration: "none",
+              }}
+            >
+              👥 Usuarios / Bloqueos
+            </Link>
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: "0.8rem", flexWrap: "wrap" }}>

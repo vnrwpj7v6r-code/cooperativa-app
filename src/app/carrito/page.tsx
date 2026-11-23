@@ -16,15 +16,29 @@ export default function Carrito() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [confirmedCode, setConfirmedCode] = useState<string | null>(null);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [blockedReason, setBlockedReason] = useState<string | null>(null);
 
   useEffect(() => {
-    async function checkLogin() {
+    async function checkLoginAndStatus() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         router.push("/login");
+        return;
+      }
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("is_blocked, blocked_reason")
+        .eq("id", session.user.id)
+        .single();
+
+      if (profile?.is_blocked) {
+        setIsBlocked(true);
+        setBlockedReason(profile.blocked_reason || null);
       }
     }
-    checkLogin();
+    checkLoginAndStatus();
   }, [router]);
 
   async function handleConfirm() {
@@ -34,6 +48,20 @@ export default function Carrito() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
       router.push("/login");
+      return;
+    }
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_blocked, blocked_reason")
+      .eq("id", session.user.id)
+      .single();
+
+    if (profile?.is_blocked) {
+      setIsBlocked(true);
+      setBlockedReason(profile.blocked_reason || null);
+      setError("Tu cuenta se encuentra bloqueada y no puedes realizar pedidos en este momento.");
+      setLoading(false);
       return;
     }
 
@@ -113,6 +141,30 @@ export default function Carrito() {
     <main style={{ background: "#E8F5E9", minHeight: "100vh", padding: "1.5rem", color: "#111111" }}>
       <div style={{ maxWidth: "520px", margin: "0 auto" }}>
         <h1 style={{ color: "#2E7D32", marginBottom: "1.5rem" }}>🛒 Tu carrito</h1>
+
+        {isBlocked && (
+          <div
+            style={{
+              background: "#FEE2E2",
+              border: "2px solid #DC2626",
+              color: "#991B1B",
+              padding: "1rem 1.2rem",
+              borderRadius: "10px",
+              marginBottom: "1.2rem",
+              fontWeight: 700,
+            }}
+          >
+            <p style={{ margin: "0 0 0.35rem 0", fontSize: "1.05rem" }}>
+              🚫 Tu cuenta está temporalmente bloqueada
+            </p>
+            <p style={{ margin: 0, fontSize: "0.92rem", fontWeight: 600 }}>
+              {blockedReason
+                ? `Motivo: ${blockedReason}. `
+                : "Tienes un asunto pendiente con la cooperativa. "}
+              Acude a caja para regularizar tu situación y desbloquear tus pedidos.
+            </p>
+          </div>
+        )}
 
         {error && (
           <p style={{ background: "#FEE2E2", color: "#B91C1C", padding: "0.8rem", borderRadius: "8px", fontWeight: 600 }}>
@@ -224,6 +276,7 @@ export default function Carrito() {
                   type="radio"
                   checked={paymentMethod === "efectivo"}
                   onChange={() => setPaymentMethod("efectivo")}
+                  disabled={isBlocked}
                   style={{ width: "18px", height: "18px", accentColor: "#2E7D32" }}
                 />
                 Efectivo (al recoger)
@@ -233,6 +286,7 @@ export default function Carrito() {
                   type="radio"
                   checked={paymentMethod === "transferencia"}
                   onChange={() => setPaymentMethod("transferencia")}
+                  disabled={isBlocked}
                   style={{ width: "18px", height: "18px", accentColor: "#2E7D32" }}
                 />
                 Transferencia
@@ -240,21 +294,25 @@ export default function Carrito() {
 
               <button
                 onClick={handleConfirm}
-                disabled={loading}
+                disabled={loading || isBlocked}
                 style={{
-                  background: "#2E7D32",
+                  background: isBlocked ? "#9CA3AF" : "#2E7D32",
                   color: "#FFFFFF",
                   border: "none",
                   padding: "0.9rem 1.5rem",
                   borderRadius: "8px",
                   fontWeight: 800,
                   fontSize: "1.05rem",
-                  cursor: "pointer",
+                  cursor: isBlocked ? "not-allowed" : "pointer",
                   width: "100%",
                   boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
                 }}
               >
-                {loading ? "Confirmando..." : "Confirmar pedido"}
+                {isBlocked
+                  ? "🚫 Cuenta bloqueada para pedidos"
+                  : loading
+                  ? "Confirmando..."
+                  : "Confirmar pedido"}
               </button>
             </div>
           </>
