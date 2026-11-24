@@ -31,6 +31,11 @@ const STATUS_FLOW: Record<string, { next: string; label: string }> = {
   listo: { next: "entregado", label: "Marcar entregado" },
 };
 
+const PREV_STATUS_FLOW: Record<string, { prev: string; label: string }> = {
+  en_preparacion: { prev: "recibido", label: "↩ Regresar a recibido" },
+  listo: { prev: "en_preparacion", label: "↩ Regresar a preparación" },
+};
+
 export default function AdminPedidos() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
@@ -155,13 +160,13 @@ export default function AdminPedidos() {
     };
   }, []);
 
-  async function advanceStatus(order: Order, nextStatus: string) {
-    if (nextStatus === "entregado" && !order.is_paid) {
+  async function updateOrderStatus(order: Order, targetStatus: string) {
+    if (targetStatus === "entregado" && !order.is_paid) {
       alert("⚠️ ¡No puedes entregar este pedido!\n\nPrimero debes hacer clic en '💰 REGISTRAR COBRO' para confirmar el pago.");
       return;
     }
 
-    if (nextStatus === "entregado") {
+    if (targetStatus === "entregado") {
       for (const item of order.order_items) {
         if (item.product_id) {
           const { data: prod } = await supabase
@@ -183,7 +188,7 @@ export default function AdminPedidos() {
 
     await supabase
       .from("orders")
-      .update({ status: nextStatus, updated_at: new Date().toISOString() })
+      .update({ status: targetStatus, updated_at: new Date().toISOString() })
       .eq("id", order.id);
 
     loadOrders();
@@ -310,6 +315,7 @@ export default function AdminPedidos() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "1.5rem" }}>
             {orders.map((order) => {
               const flow = STATUS_FLOW[order.status];
+              const prevFlow = PREV_STATUS_FLOW[order.status];
               const minutesAgo = Math.floor((Date.now() - new Date(order.created_at).getTime()) / 60000);
               const profileData = Array.isArray(order.profiles) ? order.profiles[0] : order.profiles;
               const clientName = profileData?.full_name || profileData?.name || profileData?.nombre || "Cliente sin nombre";
@@ -371,7 +377,7 @@ export default function AdminPedidos() {
 
                   {flow && (
                     <button
-                      onClick={() => advanceStatus(order, flow.next)}
+                      onClick={() => updateOrderStatus(order, flow.next)}
                       style={{
                         width: "100%",
                         marginTop: "0.5rem",
@@ -387,6 +393,26 @@ export default function AdminPedidos() {
                       }}
                     >
                       {flow.label}
+                    </button>
+                  )}
+
+                  {prevFlow && (
+                    <button
+                      onClick={() => updateOrderStatus(order, prevFlow.prev)}
+                      style={{
+                        width: "100%",
+                        marginTop: "0.45rem",
+                        background: "#F3F4F6",
+                        color: "#374151",
+                        border: "1px solid #9CA3AF",
+                        padding: "0.55rem",
+                        borderRadius: "6px",
+                        fontWeight: 700,
+                        fontSize: "0.88rem",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {prevFlow.label}
                     </button>
                   )}
                 </div>
