@@ -161,6 +161,12 @@ export default function AdminPedidos() {
   }, []);
 
   async function updateOrderStatus(order: Order, targetStatus: string) {
+    const isReverting = PREV_STATUS_FLOW[order.status]?.prev === targetStatus;
+    if (isReverting && order.is_paid) {
+      alert("⚠️ No puedes regresar el estado de un pedido que ya fue cobrado.");
+      return;
+    }
+
     if (targetStatus === "entregado" && !order.is_paid) {
       alert("⚠️ ¡No puedes entregar este pedido!\n\nPrimero debes hacer clic en '💰 REGISTRAR COBRO' para confirmar el pago.");
       return;
@@ -396,7 +402,7 @@ export default function AdminPedidos() {
                     </button>
                   )}
 
-                  {prevFlow && (
+                  {prevFlow && !order.is_paid && (
                     <button
                       onClick={() => updateOrderStatus(order, prevFlow.prev)}
                       style={{
